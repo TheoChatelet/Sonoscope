@@ -1,7 +1,6 @@
-streamlit>=1.38
 numpy>=1.26
 scipy>=1.13
 soundfile>=0.12
 sounddevice>=0.4
-plotly>=5.22
+matplotlib>=3.8
 librosa>=0.10

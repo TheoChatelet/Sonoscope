@@ -1,89 +1,146 @@
-"""Sonoscope : enregistrer un son (produit) et le décomposer en fréquences."""
+"""Sonoscope : enregistrer un son (produit) et le décomposer en fréquences (interface Tkinter)."""
+
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
-import plotly.graph_objects as go
-import streamlit as st
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 from sonoscope import analysis, audio_io
 
-st.set_page_config(page_title="Sonoscope", layout="wide")
-st.title("Sonoscope")
-st.caption("Enregistrer un son de produit et l'analyser : forme d'onde, spectre, fréquences dominantes.")
 
-tab_record, tab_import = st.tabs(["Enregistrer (micro)", "Importer un fichier"])
+class SonoscopeApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sonoscope")
+        self.geometry("1100x800")
 
-with tab_record:
-    duration = st.slider("Durée d'enregistrement (secondes)", 1, 30, 5)
-    if st.button("Enregistrer", type="primary"):
+        self.data = None
+        self.sample_rate = None
+
+        self._build_controls()
+        self._build_plots()
+
+    def _build_controls(self):
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(side=tk.TOP, fill=tk.X)
+
+        ttk.Label(frame, text="Durée (s) :").pack(side=tk.LEFT)
+        self.duration_var = tk.IntVar(value=5)
+        ttk.Spinbox(frame, from_=1, to=30, textvariable=self.duration_var, width=5).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.record_btn = ttk.Button(frame, text="Enregistrer", command=self.on_record)
+        self.record_btn.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(frame, text="Importer un fichier...", command=self.on_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame, text="Écouter", command=self.on_play).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(frame, text="Nom du produit :").pack(side=tk.LEFT, padx=(20, 5))
+        self.product_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.product_var, width=20).pack(side=tk.LEFT)
+        ttk.Button(frame, text="Sauvegarder", command=self.on_save).pack(side=tk.LEFT, padx=5)
+
+        self.status_var = tk.StringVar(value="Enregistrez un son ou importez un fichier.")
+        ttk.Label(self, textvariable=self.status_var, padding=(10, 0)).pack(side=tk.TOP, fill=tk.X)
+
+    def _build_plots(self):
+        self.figure = Figure(figsize=(10, 8), dpi=100)
+        self.ax_wave = self.figure.add_subplot(311)
+        self.ax_fft = self.figure.add_subplot(312)
+        self.ax_spec = self.figure.add_subplot(313)
+        self.figure.tight_layout(pad=3)
+
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    def on_record(self):
+        self.record_btn.config(state=tk.DISABLED)
+        self.status_var.set(f"Enregistrement en cours ({self.duration_var.get()}s)...")
+        threading.Thread(target=self._record_worker, daemon=True).start()
+
+    def _record_worker(self):
         try:
-            with st.spinner(f"Enregistrement en cours ({duration}s)..."):
-                data, sr = audio_io.record_from_mic(duration)
-            st.session_state["audio"] = (data, sr)
-            st.success("Enregistrement terminé.")
-        except Exception as exc:
-            st.error(f"Impossible d'accéder au micro : {exc}")
+            data, sr = audio_io.record_from_mic(self.duration_var.get())
+        except Exception as exc:  # noqa: BLE001 - erreur micro remontée telle quelle à l'utilisateur
+            self.after(0, lambda exc=exc: self._on_record_error(exc))
+            return
+        self.after(0, lambda: self._on_audio_ready(data, sr, "Enregistrement terminé."))
 
-with tab_import:
-    uploaded = st.file_uploader("Fichier audio", type=["wav", "flac", "ogg", "mp3"])
-    if uploaded is not None:
-        data, sr = audio_io.load_audio_file(uploaded)
-        st.session_state["audio"] = (data, sr)
-        st.success(f"Fichier chargé : {uploaded.name} ({sr} Hz, {len(data) / sr:.2f} s)")
+    def _on_record_error(self, exc):
+        self.record_btn.config(state=tk.NORMAL)
+        messagebox.showerror("Erreur micro", str(exc))
+        self.status_var.set("Erreur lors de l'enregistrement.")
 
-if "audio" in st.session_state:
-    data, sr = st.session_state["audio"]
-
-    st.divider()
-    st.subheader("Analyse")
-
-    col_name, col_save = st.columns([3, 1])
-    with col_name:
-        product_name = st.text_input("Nom du produit (pour la sauvegarde)", value="")
-    with col_save:
-        st.write("")
-        st.write("")
-        if st.button("Sauvegarder l'enregistrement"):
-            path = audio_io.save_recording(data, sr, product_name or "produit")
-            st.info(f"Sauvegardé : {path}")
-
-    st.audio(data, sample_rate=sr)
-
-    t = np.linspace(0, len(data) / sr, len(data))
-    fig_wave = go.Figure(go.Scatter(x=t, y=data, mode="lines", line=dict(width=1)))
-    fig_wave.update_layout(
-        title="Forme d'onde", xaxis_title="Temps (s)", yaxis_title="Amplitude", height=300, margin=dict(t=40)
-    )
-    st.plotly_chart(fig_wave, use_container_width=True)
-
-    freqs, magnitude = analysis.compute_fft(data, sr)
-    fig_fft = go.Figure(go.Scatter(x=freqs, y=magnitude, mode="lines"))
-    fig_fft.update_layout(
-        title="Spectre de fréquence (FFT)",
-        xaxis_title="Fréquence (Hz)",
-        yaxis_title="Amplitude",
-        height=350,
-        margin=dict(t=40),
-    )
-    st.plotly_chart(fig_fft, use_container_width=True)
-
-    peaks = analysis.find_dominant_frequencies(freqs, magnitude)
-    if peaks:
-        st.write("Fréquences dominantes détectées :")
-        st.table(
-            [{"Fréquence (Hz)": round(f, 1), "Amplitude": round(m, 5)} for f, m in peaks]
+    def on_import(self):
+        path = filedialog.askopenfilename(
+            title="Choisir un fichier audio",
+            filetypes=[("Fichiers audio", "*.wav *.flac *.ogg *.mp3"), ("Tous les fichiers", "*.*")],
         )
-    else:
-        st.write("Aucun pic de fréquence marqué détecté.")
+        if not path:
+            return
+        try:
+            data, sr = audio_io.load_audio_file(path)
+        except Exception as exc:  # noqa: BLE001 - erreur de lecture remontée telle quelle à l'utilisateur
+            messagebox.showerror("Erreur d'import", str(exc))
+            return
+        self._on_audio_ready(data, sr, f"Fichier chargé : {path}")
 
-    f_spec, t_spec, Sxx_db = analysis.compute_spectrogram(data, sr)
-    fig_spec = go.Figure(go.Heatmap(z=Sxx_db, x=t_spec, y=f_spec, colorscale="Viridis"))
-    fig_spec.update_layout(
-        title="Spectrogramme",
-        xaxis_title="Temps (s)",
-        yaxis_title="Fréquence (Hz)",
-        height=400,
-        margin=dict(t=40),
-    )
-    st.plotly_chart(fig_spec, use_container_width=True)
-else:
-    st.info("Enregistrez un son via le micro ou importez un fichier pour lancer l'analyse.")
+    def _on_audio_ready(self, data, sr, message):
+        self.record_btn.config(state=tk.NORMAL)
+        self.data, self.sample_rate = data, sr
+        self.status_var.set(message)
+        self._plot()
+
+    def on_play(self):
+        if self.data is None:
+            return
+        import sounddevice as sd
+
+        sd.play(self.data, self.sample_rate)
+
+    def on_save(self):
+        if self.data is None:
+            return
+        path = audio_io.save_recording(self.data, self.sample_rate, self.product_var.get() or "produit")
+        messagebox.showinfo("Sauvegardé", f"Enregistrement sauvegardé :\n{path}")
+
+    def _plot(self):
+        data, sr = self.data, self.sample_rate
+
+        self.ax_wave.clear()
+        t = np.linspace(0, len(data) / sr, len(data))
+        self.ax_wave.plot(t, data, linewidth=0.8)
+        self.ax_wave.set_title("Forme d'onde")
+        self.ax_wave.set_xlabel("Temps (s)")
+        self.ax_wave.set_ylabel("Amplitude")
+
+        self.ax_fft.clear()
+        freqs, magnitude = analysis.compute_fft(data, sr)
+        self.ax_fft.plot(freqs, magnitude, linewidth=0.8)
+        self.ax_fft.set_title("Spectre de fréquence (FFT)")
+        self.ax_fft.set_xlabel("Fréquence (Hz)")
+        self.ax_fft.set_ylabel("Amplitude")
+        for freq, mag in analysis.find_dominant_frequencies(freqs, magnitude):
+            self.ax_fft.annotate(
+                f"{freq:.0f} Hz", xy=(freq, mag), xytext=(0, 8), textcoords="offset points", fontsize=8, ha="center"
+            )
+
+        self.ax_spec.clear()
+        f_spec, t_spec, sxx_db = analysis.compute_spectrogram(data, sr)
+        self.ax_spec.pcolormesh(t_spec, f_spec, sxx_db, shading="auto", cmap="viridis")
+        self.ax_spec.set_title("Spectrogramme")
+        self.ax_spec.set_xlabel("Temps (s)")
+        self.ax_spec.set_ylabel("Fréquence (Hz)")
+
+        self.figure.tight_layout(pad=3)
+        self.canvas.draw()
+
+
+def main():
+    SonoscopeApp().mainloop()
+
+
+if __name__ == "__main__":
+    main()

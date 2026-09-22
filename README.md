@@ -23,8 +23,10 @@ sudo apt install libportaudio2
 ## Lancer l'application
 
 ```bash
-streamlit run app.py
+python app.py
 ```
+
+Interface de bureau Tkinter (pas de serveur web, pas de popup pare-feu/réseau privé).
 
 ## Fonctionnalités (v1)
 
