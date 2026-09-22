@@ -20,7 +20,7 @@ with tab_record:
                 data, sr = audio_io.record_from_mic(duration)
             st.session_state["audio"] = (data, sr)
             st.success("Enregistrement terminé.")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - erreur micro remontée telle quelle à l'utilisateur
             st.error(f"Impossible d'accéder au micro : {exc}")
 
 with tab_import:
@@ -49,9 +49,9 @@ if "audio" in st.session_state:
     st.audio(data, sample_rate=sr)
 
     t = np.linspace(0, len(data) / sr, len(data))
-    fig_wave = go.Figure(go.Scatter(x=t, y=data, mode="lines", line=dict(width=1)))
+    fig_wave = go.Figure(go.Scatter(x=t, y=data, mode="lines", line={"width": 1}))
     fig_wave.update_layout(
-        title="Forme d'onde", xaxis_title="Temps (s)", yaxis_title="Amplitude", height=300, margin=dict(t=40)
+        title="Forme d'onde", xaxis_title="Temps (s)", yaxis_title="Amplitude", height=300, margin={"t": 40}
     )
     st.plotly_chart(fig_wave, use_container_width=True)
 
@@ -62,7 +62,7 @@ if "audio" in st.session_state:
         xaxis_title="Fréquence (Hz)",
         yaxis_title="Amplitude",
         height=350,
-        margin=dict(t=40),
+        margin={"t": 40},
     )
     st.plotly_chart(fig_fft, use_container_width=True)
 
@@ -82,7 +82,7 @@ if "audio" in st.session_state:
         xaxis_title="Temps (s)",
         yaxis_title="Fréquence (Hz)",
         height=400,
-        margin=dict(t=40),
+        margin={"t": 40},
     )
     st.plotly_chart(fig_spec, use_container_width=True)
 else:
