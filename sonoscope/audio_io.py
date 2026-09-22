@@ -20,7 +20,7 @@ def load_audio_file(file_like_or_path) -> tuple[np.ndarray, int]:
     """Charge un fichier audio (wav/flac/ogg/mp3) et renvoie (signal mono, sample_rate)."""
     try:
         data, sr = sf.read(file_like_or_path, always_2d=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 - libsndfile lève des types d'erreur variables selon le format/la version
         # Formats non couverts par libsndfile (ex. certains mp3) : repli sur librosa/audioread.
         import librosa
 
@@ -39,7 +39,7 @@ def save_recording(data: np.ndarray, sample_rate: int, product_name: str, base_d
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in product_name.strip()) or "produit"
     folder = Path(base_dir) / safe_name
     folder.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005 - horodatage local pour un nom de fichier
     path = folder / f"{timestamp}.wav"
     sf.write(path, data, sample_rate)
     return path
