@@ -28,6 +28,32 @@ def find_dominant_frequencies(
     return sorted(((freqs[i], magnitude[i]) for i in top), key=lambda p: p[1], reverse=True)
 
 
+def compare_dominant_frequencies(
+    freqs_ref: np.ndarray,
+    magnitude_ref: np.ndarray,
+    freqs_cur: np.ndarray,
+    magnitude_cur: np.ndarray,
+    num_peaks: int = 5,
+) -> list[tuple[float, float, float, float]]:
+    """Compare les pics dominants d'un enregistrement actuel à une référence.
+
+    Renvoie une ligne par pic dominant de la référence : (fréquence référence, fréquence
+    actuelle la plus proche, écart en Hz, écart en %).
+    """
+    ref_peaks = find_dominant_frequencies(freqs_ref, magnitude_ref, num_peaks=num_peaks)
+    cur_peaks = find_dominant_frequencies(freqs_cur, magnitude_cur, num_peaks=num_peaks)
+    if not cur_peaks:
+        return []
+
+    comparisons = []
+    for freq_ref, _ in ref_peaks:
+        freq_cur, _ = min(cur_peaks, key=lambda peak: abs(peak[0] - freq_ref))
+        delta_hz = freq_cur - freq_ref
+        delta_pct = (delta_hz / freq_ref * 100) if freq_ref else 0.0
+        comparisons.append((freq_ref, freq_cur, delta_hz, delta_pct))
+    return comparisons
+
+
 def compute_spectrogram(
     signal: np.ndarray, sample_rate: int, nperseg: int = 1024
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
