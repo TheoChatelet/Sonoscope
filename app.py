@@ -68,14 +68,22 @@ class SonoscopeApp(tk.Tk):
         self.comparison_tree.pack(side=tk.TOP, fill=tk.X, pady=(5, 0))
 
     def _build_plots(self):
-        self.figure = Figure(figsize=(10, 8), dpi=100)
-        self.ax_wave = self.figure.add_subplot(311)
-        self.ax_fft = self.figure.add_subplot(312)
-        self.ax_spec = self.figure.add_subplot(313)
-        self.figure.tight_layout(pad=3)
+        notebook = ttk.Notebook(self)
+        notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.fig_wave, self.ax_wave, self.canvas_wave = self._make_plot_tab(notebook, "Forme d'onde")
+        self.fig_fft, self.ax_fft, self.canvas_fft = self._make_plot_tab(notebook, "Spectre FFT")
+        self.fig_spec, self.ax_spec, self.canvas_spec = self._make_plot_tab(notebook, "Spectrogramme")
+
+    def _make_plot_tab(self, notebook, title):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text=title)
+
+        figure = Figure(figsize=(10, 6), dpi=100)
+        ax = figure.add_subplot(111)
+        canvas = FigureCanvasTkAgg(figure, master=tab)
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        return figure, ax, canvas
 
     def on_record(self):
         self.record_btn.config(state=tk.DISABLED)
@@ -156,6 +164,8 @@ class SonoscopeApp(tk.Tk):
         self.ax_wave.set_title("Forme d'onde")
         self.ax_wave.set_xlabel("Temps (s)")
         self.ax_wave.set_ylabel("Amplitude")
+        self.fig_wave.tight_layout(pad=3)
+        self.canvas_wave.draw()
 
         self.ax_fft.clear()
         freqs, magnitude = analysis.compute_fft(data, sr)
@@ -177,6 +187,8 @@ class SonoscopeApp(tk.Tk):
             self._update_comparison(freqs_ref, magnitude_ref, freqs, magnitude)
         else:
             self._clear_comparison()
+        self.fig_fft.tight_layout(pad=3)
+        self.canvas_fft.draw()
 
         self.ax_spec.clear()
         f_spec, t_spec, sxx_db = analysis.compute_spectrogram(data, sr)
@@ -184,9 +196,8 @@ class SonoscopeApp(tk.Tk):
         self.ax_spec.set_title("Spectrogramme")
         self.ax_spec.set_xlabel("Temps (s)")
         self.ax_spec.set_ylabel("Fréquence (Hz)")
-
-        self.figure.tight_layout(pad=3)
-        self.canvas.draw()
+        self.fig_spec.tight_layout(pad=3)
+        self.canvas_spec.draw()
 
     def _update_comparison(self, freqs_ref, magnitude_ref, freqs_cur, magnitude_cur):
         self._clear_comparison()
