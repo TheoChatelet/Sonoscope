@@ -35,6 +35,55 @@ def load_audio_file(file_like_or_path) -> tuple[np.ndarray, int]:
     return data.astype(np.float32), sr
 
 
+def _safe_folder_name(name: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in name.strip()) or "produit"
+
+
+def register_product(nom: str, numero: str = "", specificite: str = "", base_dir: str = "data/recordings") -> Path:
+    """Enregistre un produit (ou met à jour ses infos si le nom existe déjà) et renvoie son dossier."""
+    folder = Path(base_dir) / _safe_folder_name(nom)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    product_path = folder / "product.json"
+    date_creation = datetime.now().strftime("%Y-%m-%d %H:%M")  # noqa: DTZ005 - horodatage local d'affichage
+    if product_path.is_file():
+        date_creation = json.loads(product_path.read_text(encoding="utf-8")).get("date_creation", date_creation)
+
+    metadata = {
+        "nom": nom.strip(),
+        "numero": numero.strip(),
+        "specificite": specificite.strip(),
+        "date_creation": date_creation,
+    }
+    product_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return folder
+
+
+def list_registered_products(base_dir: str = "data/recordings") -> list[dict]:
+    """Renvoie les produits enregistrés (avec leur nombre de tests).
+
+    Un dossier sans product.json (créé avant l'ajout de cette fonctionnalité) est tout de même
+    listé, avec son nom de dossier en guise de nom et des champs numéro/spécificité vides.
+    """
+    root = Path(base_dir)
+    if not root.is_dir():
+        return []
+
+    products = []
+    for folder in sorted(root.iterdir()):
+        if not folder.is_dir():
+            continue
+        product_path = folder / "product.json"
+        if product_path.is_file():
+            metadata = json.loads(product_path.read_text(encoding="utf-8"))
+        else:
+            metadata = {"nom": folder.name, "numero": "", "specificite": "", "date_creation": ""}
+        metadata["folder"] = folder.name
+        metadata["nb_tests"] = sum(1 for _ in folder.glob("*.wav"))
+        products.append(metadata)
+    return products
+
+
 def save_recording(
     data: np.ndarray,
     sample_rate: int,
@@ -45,8 +94,7 @@ def save_recording(
     dominant_frequencies: list[tuple[float, float]] | None = None,
 ) -> Path:
     """Sauvegarde un enregistrement (.wav) et ses métadonnées (.json) sous data/recordings/<produit>/<horodatage>.*."""
-    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in product_name.strip()) or "produit"
-    folder = Path(base_dir) / safe_name
+    folder = Path(base_dir) / _safe_folder_name(product_name)
     folder.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005 - horodatage local pour un nom de fichier
     wav_path = folder / f"{timestamp}.wav"
@@ -72,14 +120,14 @@ def list_products(base_dir: str = "data/recordings") -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
-def list_recordings(product_name: str, base_dir: str = "data/recordings") -> list[dict]:
-    """Renvoie les enregistrements sauvegardés d'un produit, triés par date, avec leurs métadonnées.
+def list_recordings(folder_name: str, base_dir: str = "data/recordings") -> list[dict]:
+    """Renvoie les enregistrements sauvegardés d'un produit (par nom de dossier), triés par date.
 
     Chaque enregistrement contient au minimum : path, horodatage, cas, remarques, duree_sec,
     sample_rate, frequences_dominantes. Les .wav sauvegardés avant l'ajout des métadonnées (pas
     de .json associé) sont tout de même listés, avec des métadonnées minimales.
     """
-    folder = Path(base_dir) / product_name
+    folder = Path(base_dir) / folder_name
     if not folder.is_dir():
         return []
 
@@ -91,7 +139,7 @@ def list_recordings(product_name: str, base_dir: str = "data/recordings") -> lis
         else:
             info = sf.info(wav_path)
             metadata = {
-                "produit": product_name,
+                "produit": folder_name,
                 "cas": "",
                 "remarques": "",
                 "duree_sec": round(info.frames / info.samplerate, 2),
