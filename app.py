@@ -2,6 +2,7 @@
 
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -16,7 +17,7 @@ class SonoscopeApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Sonoscope")
-        self.geometry("1100x950")
+        self.geometry("1150x980")
 
         self.data = None
         self.sample_rate = None
@@ -29,23 +30,37 @@ class SonoscopeApp(tk.Tk):
         self._build_plots()
 
     def _build_controls(self):
-        frame = ttk.Frame(self, padding=10)
-        frame.pack(side=tk.TOP, fill=tk.X)
+        row1 = ttk.Frame(self, padding=(10, 10, 10, 5))
+        row1.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Label(frame, text="Durée (s) :").pack(side=tk.LEFT)
+        ttk.Label(row1, text="Durée (s) :").pack(side=tk.LEFT)
         self.duration_var = tk.IntVar(value=5)
-        ttk.Spinbox(frame, from_=1, to=30, textvariable=self.duration_var, width=5).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Spinbox(row1, from_=1, to=30, textvariable=self.duration_var, width=5).pack(side=tk.LEFT, padx=(0, 10))
 
-        self.record_btn = ttk.Button(frame, text="Enregistrer", command=self.on_record)
+        self.record_btn = ttk.Button(row1, text="Enregistrer", command=self.on_record)
         self.record_btn.pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(frame, text="Importer un fichier...", command=self.on_import).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame, text="Écouter", command=self.on_play).pack(side=tk.LEFT, padx=5)
+        ttk.Button(row1, text="Importer un fichier...", command=self.on_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(row1, text="Écouter", command=self.on_play).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(frame, text="Nom du produit :").pack(side=tk.LEFT, padx=(20, 5))
+        row2 = ttk.Frame(self, padding=(10, 0, 10, 5))
+        row2.pack(side=tk.TOP, fill=tk.X)
+
+        ttk.Label(row2, text="Nom du produit :").pack(side=tk.LEFT)
         self.product_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.product_var, width=20).pack(side=tk.LEFT)
-        ttk.Button(frame, text="Sauvegarder", command=self.on_save).pack(side=tk.LEFT, padx=5)
+        ttk.Entry(row2, textvariable=self.product_var, width=20).pack(side=tk.LEFT, padx=(5, 15))
+
+        ttk.Label(row2, text="Cas :").pack(side=tk.LEFT)
+        self.cas_var = tk.StringVar()
+        ttk.Combobox(
+            row2, textvariable=self.cas_var, values=["", "Cas 1", "Cas 2", "Autre"], state="readonly", width=10
+        ).pack(side=tk.LEFT, padx=(5, 15))
+
+        ttk.Label(row2, text="Remarques :").pack(side=tk.LEFT)
+        self.remarques_var = tk.StringVar()
+        ttk.Entry(row2, textvariable=self.remarques_var, width=30).pack(side=tk.LEFT, padx=(5, 15))
+
+        ttk.Button(row2, text="Sauvegarder", command=self.on_save).pack(side=tk.LEFT)
 
         self.status_var = tk.StringVar(value="Enregistrez un son ou importez un fichier.")
         ttk.Label(self, textvariable=self.status_var, padding=(10, 0)).pack(side=tk.TOP, fill=tk.X)
@@ -68,22 +83,150 @@ class SonoscopeApp(tk.Tk):
         self.comparison_tree.pack(side=tk.TOP, fill=tk.X, pady=(5, 0))
 
     def _build_plots(self):
-        notebook = ttk.Notebook(self)
-        notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.fig_wave, self.ax_wave, self.canvas_wave = self._make_plot_tab(notebook, "Forme d'onde")
-        self.fig_fft, self.ax_fft, self.canvas_fft = self._make_plot_tab(notebook, "Spectre FFT")
-        self.fig_spec, self.ax_spec, self.canvas_spec = self._make_plot_tab(notebook, "Spectrogramme")
+        self.fig_wave, self.ax_wave, self.canvas_wave = self._add_plot_tab("Forme d'onde")
+        self.fig_fft, self.ax_fft, self.canvas_fft = self._add_plot_tab("Spectre FFT")
+        self.fig_spec, self.ax_spec, self.canvas_spec = self._add_plot_tab("Spectrogramme")
+        self._build_history_tab()
 
-    def _make_plot_tab(self, notebook, title):
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text=title)
+    def _add_plot_tab(self, title):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=title)
 
         figure = Figure(figsize=(10, 6), dpi=100)
         ax = figure.add_subplot(111)
         canvas = FigureCanvasTkAgg(figure, master=tab)
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         return figure, ax, canvas
+
+    def _build_history_tab(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="Historique")
+
+        top = ttk.Frame(tab, padding=10)
+        top.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(top, text="Produit :").pack(side=tk.LEFT)
+        self.history_product_var = tk.StringVar()
+        self.history_product_combo = ttk.Combobox(
+            top, textvariable=self.history_product_var, state="readonly", width=25
+        )
+        self.history_product_combo.pack(side=tk.LEFT, padx=(5, 10))
+        self.history_product_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_history())
+        ttk.Button(top, text="Rafraîchir la liste des produits", command=self._refresh_products).pack(side=tk.LEFT)
+
+        columns = ("date", "cas", "duree", "freq", "remarques")
+        headings = ("Date", "Cas", "Durée (s)", "Fréq. dominante (Hz)", "Remarques")
+        self.history_tree = ttk.Treeview(tab, columns=columns, show="headings", height=8)
+        for col, label in zip(columns, headings, strict=True):
+            self.history_tree.heading(col, text=label)
+            self.history_tree.column(col, width=160, anchor=tk.CENTER)
+        self.history_tree.pack(side=tk.TOP, fill=tk.X, padx=10)
+
+        actions = ttk.Frame(tab, padding=10)
+        actions.pack(side=tk.TOP, fill=tk.X)
+        ttk.Button(actions, text="Charger comme actuel", command=self._load_history_as_current).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        ttk.Button(actions, text="Charger comme référence", command=self._load_history_as_reference).pack(
+            side=tk.LEFT
+        )
+
+        self.fig_history = Figure(figsize=(10, 3.5), dpi=100)
+        self.ax_history = self.fig_history.add_subplot(111)
+        self.canvas_history = FigureCanvasTkAgg(self.fig_history, master=tab)
+        self.canvas_history.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(5, 10))
+
+        self._history_records = []
+        self._refresh_products()
+
+    def _refresh_products(self):
+        products = audio_io.list_products()
+        self.history_product_combo["values"] = products
+        if products and self.history_product_var.get() not in products:
+            self.history_product_var.set(products[0])
+        elif not products:
+            self.history_product_var.set("")
+        self._refresh_history()
+
+    def _refresh_history(self):
+        for row in self.history_tree.get_children():
+            self.history_tree.delete(row)
+
+        product = self.history_product_var.get()
+        self._history_records = audio_io.list_recordings(product) if product else []
+
+        for record in self._history_records:
+            peaks = record.get("frequences_dominantes") or []
+            freq_text = f"{peaks[0][0]:.0f}" if peaks else "-"
+            self.history_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    self._format_timestamp(record["horodatage"]),
+                    record.get("cas", ""),
+                    record.get("duree_sec", "-"),
+                    freq_text,
+                    record.get("remarques", ""),
+                ),
+            )
+        self._redraw_history_trend()
+
+    def _redraw_history_trend(self):
+        self.ax_history.clear()
+        self.ax_history.set_title("Fréquence dominante dans le temps")
+        self.ax_history.set_xlabel("Date")
+        self.ax_history.set_ylabel("Fréquence (Hz)")
+
+        points = [
+            (self._parse_timestamp(record["horodatage"]), record["frequences_dominantes"][0][0])
+            for record in self._history_records
+            if record.get("frequences_dominantes")
+        ]
+        if points:
+            points.sort(key=lambda point: point[0])
+            dates, freqs = zip(*points, strict=True)
+            self.ax_history.plot(dates, freqs, marker="o", linewidth=1)
+            self.fig_history.autofmt_xdate()
+        self.fig_history.tight_layout(pad=3)
+        self.canvas_history.draw()
+
+    @staticmethod
+    def _parse_timestamp(horodatage: str) -> datetime:
+        return datetime.strptime(horodatage, "%Y%m%d_%H%M%S")  # noqa: DTZ007 - horodatage local, tri chronologique seulement
+
+    @classmethod
+    def _format_timestamp(cls, horodatage: str) -> str:
+        try:
+            return cls._parse_timestamp(horodatage).strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            return horodatage
+
+    def _selected_history_record(self):
+        selection = self.history_tree.selection()
+        if not selection:
+            messagebox.showinfo("Historique", "Sélectionnez d'abord une ligne dans l'historique.")
+            return None
+        index = self.history_tree.index(selection[0])
+        return self._history_records[index]
+
+    def _load_history_as_current(self):
+        record = self._selected_history_record()
+        if record is None:
+            return
+        data, sr = audio_io.load_audio_file(str(record["path"]))
+        self._on_audio_ready(data, sr, f"Historique chargé : {record['path'].name}")
+
+    def _load_history_as_reference(self):
+        record = self._selected_history_record()
+        if record is None:
+            return
+        data, sr = audio_io.load_audio_file(str(record["path"]))
+        self.reference_data, self.reference_sample_rate = data, sr
+        self.reference_label_var.set(f"Référence : {record['path'].name}")
+        if self.data is not None:
+            self._plot()
 
     def on_record(self):
         self.record_btn.config(state=tk.DISABLED)
@@ -152,8 +295,18 @@ class SonoscopeApp(tk.Tk):
     def on_save(self):
         if self.data is None:
             return
-        path = audio_io.save_recording(self.data, self.sample_rate, self.product_var.get() or "produit")
+        freqs, magnitude = analysis.compute_fft(self.data, self.sample_rate)
+        dominant = analysis.find_dominant_frequencies(freqs, magnitude)
+        path = audio_io.save_recording(
+            self.data,
+            self.sample_rate,
+            self.product_var.get() or "produit",
+            cas=self.cas_var.get(),
+            remarques=self.remarques_var.get(),
+            dominant_frequencies=dominant,
+        )
         messagebox.showinfo("Sauvegardé", f"Enregistrement sauvegardé :\n{path}")
+        self._refresh_products()
 
     def _plot(self):
         data, sr = self.data, self.sample_rate
