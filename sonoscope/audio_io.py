@@ -39,23 +39,67 @@ def _safe_folder_name(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name.strip()) or "produit"
 
 
-def register_product(nom: str, numero: str = "", specificite: str = "", base_dir: str = "data/recordings") -> Path:
-    """Enregistre un produit (ou met à jour ses infos si le nom existe déjà) et renvoie son dossier."""
+def register_product(
+    nom: str,
+    numero: str = "",
+    specificite: str = "",
+    type_test: str = "",
+    date_produit: str = "",
+    base_dir: str = "data/recordings",
+) -> Path:
+    """Enregistre un nouveau produit et renvoie son dossier.
+
+    Écrase les informations existantes si le nom (et donc le dossier) existe déjà :
+    utilisez update_product() pour modifier un produit sans perdre ses infos.
+    """
     folder = Path(base_dir) / _safe_folder_name(nom)
     folder.mkdir(parents=True, exist_ok=True)
-
-    product_path = folder / "product.json"
-    date_creation = datetime.now().strftime("%Y-%m-%d %H:%M")  # noqa: DTZ005 - horodatage local d'affichage
-    if product_path.is_file():
-        date_creation = json.loads(product_path.read_text(encoding="utf-8")).get("date_creation", date_creation)
-
     metadata = {
         "nom": nom.strip(),
         "numero": numero.strip(),
         "specificite": specificite.strip(),
-        "date_creation": date_creation,
+        "type_test": type_test,
+        "date_produit": date_produit.strip(),
+        "date_creation": datetime.now().strftime("%Y-%m-%d %H:%M"),  # noqa: DTZ005 - horodatage local d'affichage
     }
-    product_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    (folder / "product.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return folder
+
+
+def get_product(folder_name: str, base_dir: str = "data/recordings") -> dict | None:
+    """Charge les métadonnées d'un produit enregistré à partir de son nom de dossier."""
+    product_path = Path(base_dir) / folder_name / "product.json"
+    if not product_path.is_file():
+        return None
+    metadata = json.loads(product_path.read_text(encoding="utf-8"))
+    metadata["folder"] = folder_name
+    return metadata
+
+
+def update_product(
+    folder_name: str,
+    numero: str = "",
+    specificite: str = "",
+    type_test: str = "",
+    date_produit: str = "",
+    base_dir: str = "data/recordings",
+) -> Path:
+    """Met à jour les infos d'un produit déjà enregistré. Le nom et le dossier ne changent pas."""
+    folder = Path(base_dir) / folder_name
+    if not folder.is_dir():
+        msg = f"Produit introuvable : {folder_name}"
+        raise FileNotFoundError(msg)
+
+    existing = get_product(folder_name, base_dir) or {}
+    metadata = {
+        "nom": existing.get("nom", folder_name),
+        "numero": numero.strip(),
+        "specificite": specificite.strip(),
+        "type_test": type_test,
+        "date_produit": date_produit.strip(),
+        "date_creation": existing.get("date_creation", ""),
+    }
+    (folder / "product.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return folder
 
 
@@ -77,7 +121,14 @@ def list_registered_products(base_dir: str = "data/recordings") -> list[dict]:
         if product_path.is_file():
             metadata = json.loads(product_path.read_text(encoding="utf-8"))
         else:
-            metadata = {"nom": folder.name, "numero": "", "specificite": "", "date_creation": ""}
+            metadata = {
+                "nom": folder.name,
+                "numero": "",
+                "specificite": "",
+                "type_test": "",
+                "date_produit": "",
+                "date_creation": "",
+            }
         metadata["folder"] = folder.name
         metadata["nb_tests"] = sum(1 for _ in folder.glob("*.wav"))
         products.append(metadata)

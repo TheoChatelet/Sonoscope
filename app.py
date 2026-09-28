@@ -1,5 +1,6 @@
 """Sonoscope : enregistrer des produits, faire des tests sonores et les analyser (interface Tkinter)."""
 
+import re
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -29,12 +30,12 @@ class AudioAnalysisView(ttk.Frame):
 
     def __init__(self, parent):
         super().__init__(parent)
-        notebook = ttk.Notebook(self)
-        notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(notebook, "Forme d'onde")
-        self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(notebook, "Spectre FFT")
-        self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(notebook, "Spectrogramme")
+        self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(self.notebook, "Forme d'onde")
+        self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT")
+        self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(self.notebook, "Spectrogramme")
 
     @staticmethod
     def _add_tab(notebook, title):
@@ -108,9 +109,7 @@ class HomePage(ttk.Frame):
         ttk.Label(self, text="Sonoscope", font=("", 22, "bold")).pack(pady=(20, 5))
         ttk.Label(self, text="Enregistrer et analyser le son de vos produits", font=("", 11)).pack(pady=(0, 30))
 
-        ttk.Button(
-            self, text="Enregistrer un produit", width=32, command=lambda: app.show_page(NewProductPage)
-        ).pack(pady=8)
+        ttk.Button(self, text="Enregistrer un produit", width=32, command=app.open_new_product).pack(pady=8)
         ttk.Button(self, text="Faire un test", width=32, command=lambda: app.show_page(TestPage)).pack(pady=8)
         ttk.Button(
             self, text="Produits enregistrés", width=32, command=lambda: app.show_page(ProductsPage)
@@ -122,28 +121,44 @@ class NewProductPage(ttk.Frame):
         super().__init__(parent, padding=30)
         self.app = app
         self._last_nom = None
+        self.editing_folder = None
 
         header = ttk.Frame(self)
         header.pack(side=tk.TOP, fill=tk.X)
         ttk.Button(header, text="< Accueil", command=lambda: app.show_page(HomePage)).pack(side=tk.LEFT)
-        ttk.Label(header, text="Enregistrer un produit", font=("", 16, "bold")).pack(side=tk.LEFT, padx=15)
+        self.title_var = tk.StringVar(value="Enregistrer un produit")
+        ttk.Label(header, textvariable=self.title_var, font=("", 16, "bold")).pack(side=tk.LEFT, padx=15)
 
         form = ttk.Frame(self, padding=(0, 30, 0, 0))
         form.pack(anchor=tk.W)
 
         ttk.Label(form, text="Nom du produit :").grid(row=0, column=0, sticky=tk.W, pady=6)
         self.nom_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.nom_var, width=40).grid(row=0, column=1, pady=6, padx=(10, 0))
+        self.nom_entry = ttk.Entry(form, textvariable=self.nom_var, width=40)
+        self.nom_entry.grid(row=0, column=1, pady=6, padx=(10, 0), sticky=tk.W)
 
-        ttk.Label(form, text="Numéro / référence :").grid(row=1, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="Type :").grid(row=1, column=0, sticky=tk.W, pady=6)
+        self.type_var = tk.StringVar()
+        ttk.Combobox(form, textvariable=self.type_var, values=["KT", "LT"], state="readonly", width=10).grid(
+            row=1, column=1, pady=6, padx=(10, 0), sticky=tk.W
+        )
+
+        ttk.Label(form, text="Numéro (4 chiffres) :").grid(row=2, column=0, sticky=tk.W, pady=6)
         self.numero_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.numero_var, width=40).grid(row=1, column=1, pady=6, padx=(10, 0))
+        ttk.Entry(form, textvariable=self.numero_var, width=10).grid(
+            row=2, column=1, pady=6, padx=(10, 0), sticky=tk.W
+        )
 
-        ttk.Label(form, text="Spécificité :").grid(row=2, column=0, sticky=tk.NW, pady=6)
+        ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=3, column=0, sticky=tk.W, pady=6)
+        self.date_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.date_var, width=12).grid(row=3, column=1, pady=6, padx=(10, 0), sticky=tk.W)
+
+        ttk.Label(form, text="Spécificité :").grid(row=4, column=0, sticky=tk.NW, pady=6)
         self.specificite_text = tk.Text(form, width=40, height=6)
-        self.specificite_text.grid(row=2, column=1, pady=6, padx=(10, 0))
+        self.specificite_text.grid(row=4, column=1, pady=6, padx=(10, 0))
 
-        ttk.Button(self, text="Enregistrer le produit", command=self.on_save).pack(anchor=tk.W, pady=(20, 5))
+        self.save_btn = ttk.Button(self, text="Enregistrer le produit", command=self.on_save)
+        self.save_btn.pack(anchor=tk.W, pady=(20, 5))
         self.status_var = tk.StringVar()
         ttk.Label(self, textvariable=self.status_var).pack(anchor=tk.W)
         self.test_btn = ttk.Button(
@@ -152,21 +167,77 @@ class NewProductPage(ttk.Frame):
         self.test_btn.pack(anchor=tk.W, pady=(10, 0))
 
     def on_show(self):
+        if self.editing_folder:
+            self._load_for_edit(self.editing_folder)
+        else:
+            self._reset_form()
+
+    def start_create(self):
+        self.editing_folder = None
+
+    def start_edit(self, folder_name):
+        self.editing_folder = folder_name
+
+    def _today(self):
+        return datetime.now().strftime("%d/%m/%Y")  # noqa: DTZ005 - date locale, champ pré-rempli mais éditable
+
+    def _reset_form(self):
+        self.nom_entry.config(state=tk.NORMAL)
         self.nom_var.set("")
+        self.type_var.set("")
         self.numero_var.set("")
+        self.date_var.set(self._today())
         self.specificite_text.delete("1.0", tk.END)
         self.status_var.set("")
         self._last_nom = None
         self.test_btn.config(state=tk.DISABLED)
+        self.title_var.set("Enregistrer un produit")
+        self.save_btn.config(text="Enregistrer le produit")
+
+    def _load_for_edit(self, folder_name):
+        product = audio_io.get_product(folder_name) or {"nom": folder_name}
+        self.nom_var.set(product.get("nom", folder_name))
+        self.nom_entry.config(state="disabled")
+        self.type_var.set(product.get("type_test", ""))
+        self.numero_var.set(product.get("numero", ""))
+        self.date_var.set(product.get("date_produit") or self._today())
+        self.specificite_text.delete("1.0", tk.END)
+        self.specificite_text.insert("1.0", product.get("specificite", ""))
+        self.status_var.set("")
+        self._last_nom = product.get("nom", folder_name)
+        self.test_btn.config(state=tk.NORMAL)
+        self.title_var.set("Modifier le produit")
+        self.save_btn.config(text="Enregistrer les modifications")
 
     def on_save(self):
         nom = self.nom_var.get().strip()
         if not nom:
             messagebox.showwarning("Produit", "Le nom du produit est obligatoire.")
             return
+        numero = self.numero_var.get().strip()
+        if numero and not re.fullmatch(r"\d{4}", numero):
+            messagebox.showwarning("Produit", "Le numéro doit comporter exactement 4 chiffres.")
+            return
+        type_test = self.type_var.get()
+        if not type_test:
+            messagebox.showwarning("Produit", "Sélectionnez un type (KT ou LT).")
+            return
+        date_produit = self.date_var.get().strip()
+        if date_produit:
+            try:
+                datetime.strptime(date_produit, "%d/%m/%Y")  # noqa: DTZ007 - validation de format seulement
+            except ValueError:
+                messagebox.showwarning("Produit", "Date invalide, format attendu : JJ/MM/AAAA.")
+                return
         specificite = self.specificite_text.get("1.0", tk.END).strip()
-        audio_io.register_product(nom, self.numero_var.get().strip(), specificite)
-        self.status_var.set(f"Produit « {nom} » enregistré.")
+
+        if self.editing_folder:
+            audio_io.update_product(self.editing_folder, numero, specificite, type_test, date_produit)
+            self.status_var.set(f"Produit « {nom} » mis à jour.")
+        else:
+            audio_io.register_product(nom, numero, specificite, type_test, date_produit)
+            self.status_var.set(f"Produit « {nom} » enregistré.")
+
         self._last_nom = nom
         self.test_btn.config(state=tk.NORMAL)
 
@@ -196,9 +267,7 @@ class TestPage(ttk.Frame):
         self.product_var = tk.StringVar()
         self.product_combo = ttk.Combobox(product_row, textvariable=self.product_var, state="readonly", width=30)
         self.product_combo.pack(side=tk.LEFT, padx=(5, 10))
-        ttk.Button(
-            product_row, text="+ Nouveau produit", command=lambda: app.show_page(NewProductPage)
-        ).pack(side=tk.LEFT)
+        ttk.Button(product_row, text="+ Nouveau produit", command=app.open_new_product).pack(side=tk.LEFT)
 
         controls = ttk.Frame(self, padding=(0, 10, 0, 5))
         controls.pack(side=tk.TOP, fill=tk.X)
@@ -373,14 +442,19 @@ class ProductsPage(ttk.Frame):
         body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         left = ttk.Frame(body)
-        columns = ("nom", "numero", "specificite", "nb_tests")
-        headings = ("Nom", "Numéro", "Spécificité", "Tests")
-        self.products_tree = ttk.Treeview(left, columns=columns, show="headings", height=20)
+        columns = ("nom", "type", "numero", "date", "specificite", "nb_tests")
+        headings = ("Nom", "Type", "Numéro", "Date", "Spécificité", "Tests")
+        widths = {"nom": 130, "type": 50, "numero": 70, "date": 90, "specificite": 160, "nb_tests": 50}
+        self.products_tree = ttk.Treeview(left, columns=columns, show="headings", height=18)
         for col, label in zip(columns, headings, strict=True):
             self.products_tree.heading(col, text=label)
-            self.products_tree.column(col, width=180 if col == "specificite" else 110, anchor=tk.W)
+            self.products_tree.column(col, width=widths[col], anchor=tk.W)
         self.products_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.products_tree.bind("<<TreeviewSelect>>", lambda _event: self._on_product_selected())
+
+        ttk.Button(left, text="Modifier ce produit", command=self._edit_selected_product).pack(
+            side=tk.TOP, fill=tk.X, pady=(5, 0)
+        )
         body.add(left, weight=1)
 
         right = ttk.Frame(body)
@@ -399,13 +473,16 @@ class ProductsPage(ttk.Frame):
             actions, text="Utiliser comme référence (page Faire un test)", command=self._use_selected_as_reference
         ).pack(side=tk.LEFT)
 
-        self.fig_trend = Figure(figsize=(8, 2.6), dpi=100)
-        self.ax_trend = self.fig_trend.add_subplot(111)
-        self.canvas_trend = FigureCanvasTkAgg(self.fig_trend, master=right)
-        self.canvas_trend.get_tk_widget().pack(side=tk.TOP, fill=tk.X, pady=(5, 5))
-
         self.analysis_view = AudioAnalysisView(right)
-        self.analysis_view.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.analysis_view.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(5, 0))
+
+        trend_tab = ttk.Frame(self.analysis_view.notebook)
+        self.analysis_view.notebook.insert(0, trend_tab, text="Tendance")
+        self.fig_trend = Figure(figsize=(10, 6), dpi=100)
+        self.ax_trend = self.fig_trend.add_subplot(111)
+        self.canvas_trend = FigureCanvasTkAgg(self.fig_trend, master=trend_tab)
+        self.canvas_trend.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.analysis_view.notebook.select(trend_tab)
 
         body.add(right, weight=2)
 
@@ -429,11 +506,21 @@ class ProductsPage(ttk.Frame):
                 iid=product["folder"],
                 values=(
                     product.get("nom", ""),
+                    product.get("type_test", ""),
                     product.get("numero", ""),
+                    product.get("date_produit", ""),
                     product.get("specificite", ""),
                     product.get("nb_tests", 0),
                 ),
             )
+
+    def _edit_selected_product(self):
+        selection = self.products_tree.selection()
+        if not selection:
+            messagebox.showinfo("Produits", "Sélectionnez d'abord un produit dans la liste.")
+            return
+        self.app.pages[NewProductPage].start_edit(selection[0])
+        self.app.show_page(NewProductPage)
 
     def _on_product_selected(self):
         for row in self.tests_tree.get_children():
@@ -527,6 +614,10 @@ class SonoscopeApp(tk.Tk):
         if hasattr(page, "on_show"):
             page.on_show()
         page.tkraise()
+
+    def open_new_product(self):
+        self.pages[NewProductPage].start_create()
+        self.show_page(NewProductPage)
 
 
 def main():
