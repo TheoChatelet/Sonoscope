@@ -119,8 +119,6 @@ class AudioAnalysisView(ttk.Frame):
         self.ax_spec.set_title("Spectrogramme")
         self.ax_spec.set_xlabel("Temps (s)")
         self.ax_spec.set_ylabel("Fréquence (Hz)")
-        if max_freq_of_interest > 0:
-            self.ax_spec.set_ylim(0, max_freq_of_interest * 1.4)
         self.fig_spec.tight_layout(pad=3)
         self.canvas_spec.draw()
 
