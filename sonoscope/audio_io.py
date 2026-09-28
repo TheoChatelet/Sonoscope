@@ -39,6 +39,23 @@ def _safe_folder_name(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name.strip()) or "produit"
 
 
+def _product_folder_name(nom: str, numero: str) -> str:
+    """Le dossier d'un produit est dérivé de nom + numéro : deux produits peuvent partager un nom
+    tant que leur numéro diffère, sans se marcher dessus."""
+    key = f"{nom}_{numero}" if numero else nom
+    return _safe_folder_name(key)
+
+
+def product_exists(nom: str, numero: str, base_dir: str = "data/recordings") -> bool:
+    """Vrai si un produit avec ce nom (insensible à la casse) et ce numéro exact est déjà enregistré."""
+    nom_norm = nom.strip().lower()
+    numero_norm = numero.strip()
+    return any(
+        product.get("nom", "").strip().lower() == nom_norm and product.get("numero", "").strip() == numero_norm
+        for product in list_registered_products(base_dir)
+    )
+
+
 def register_product(
     nom: str,
     numero: str = "",
@@ -47,12 +64,13 @@ def register_product(
     date_produit: str = "",
     base_dir: str = "data/recordings",
 ) -> Path:
-    """Enregistre un nouveau produit et renvoie son dossier.
+    """Enregistre un nouveau produit (identifié par nom + numéro) et renvoie son dossier.
 
-    Écrase les informations existantes si le nom (et donc le dossier) existe déjà :
-    utilisez update_product() pour modifier un produit sans perdre ses infos.
+    Écrase les informations existantes si le couple nom+numéro (et donc le dossier) existe déjà :
+    utilisez update_product() pour modifier un produit sans perdre ses infos, et product_exists()
+    pour vérifier l'absence de doublon avant d'appeler cette fonction.
     """
-    folder = Path(base_dir) / _safe_folder_name(nom)
+    folder = Path(base_dir) / _product_folder_name(nom, numero)
     folder.mkdir(parents=True, exist_ok=True)
     metadata = {
         "nom": nom.strip(),
@@ -138,21 +156,27 @@ def list_registered_products(base_dir: str = "data/recordings") -> list[dict]:
 def save_recording(
     data: np.ndarray,
     sample_rate: int,
-    product_name: str,
+    folder_name: str,
     base_dir: str = "data/recordings",
     cas: str = "",
     remarques: str = "",
     dominant_frequencies: list[tuple[float, float]] | None = None,
 ) -> Path:
-    """Sauvegarde un enregistrement (.wav) et ses métadonnées (.json) sous data/recordings/<produit>/<horodatage>.*."""
-    folder = Path(base_dir) / _safe_folder_name(product_name)
+    """Sauvegarde un enregistrement (.wav) et ses métadonnées (.json) sous data/recordings/<produit>/<horodatage>.*.
+
+    `folder_name` est le nom de dossier du produit (celui renvoyé par register_product ou trouvé
+    dans list_registered_products), pas forcément son nom affiché : plusieurs produits peuvent
+    partager un nom tant que leur numéro diffère.
+    """
+    folder = Path(base_dir) / folder_name
     folder.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005 - horodatage local pour un nom de fichier
     wav_path = folder / f"{timestamp}.wav"
     sf.write(wav_path, data, sample_rate)
 
+    product = get_product(folder_name, base_dir)
     metadata = {
-        "produit": product_name.strip() or "produit",
+        "produit": (product or {}).get("nom", folder_name),
         "cas": cas,
         "remarques": remarques,
         "duree_sec": round(len(data) / sample_rate, 2),

@@ -120,7 +120,7 @@ class NewProductPage(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent, padding=30)
         self.app = app
-        self._last_nom = None
+        self._last_folder = None
         self.editing_folder = None
 
         header = ttk.Frame(self)
@@ -145,9 +145,8 @@ class NewProductPage(ttk.Frame):
 
         ttk.Label(form, text="Numéro (4 chiffres) :").grid(row=2, column=0, sticky=tk.W, pady=6)
         self.numero_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.numero_var, width=10).grid(
-            row=2, column=1, pady=6, padx=(10, 0), sticky=tk.W
-        )
+        self.numero_entry = ttk.Entry(form, textvariable=self.numero_var, width=10)
+        self.numero_entry.grid(row=2, column=1, pady=6, padx=(10, 0), sticky=tk.W)
 
         ttk.Label(form, text="Date (JJ/MM/AAAA) :").grid(row=3, column=0, sticky=tk.W, pady=6)
         self.date_var = tk.StringVar()
@@ -185,11 +184,12 @@ class NewProductPage(ttk.Frame):
         self.nom_entry.config(state=tk.NORMAL)
         self.nom_var.set("")
         self.type_var.set("")
+        self.numero_entry.config(state=tk.NORMAL)
         self.numero_var.set("")
         self.date_var.set(self._today())
         self.specificite_text.delete("1.0", tk.END)
         self.status_var.set("")
-        self._last_nom = None
+        self._last_folder = None
         self.test_btn.config(state=tk.DISABLED)
         self.title_var.set("Enregistrer un produit")
         self.save_btn.config(text="Enregistrer le produit")
@@ -200,11 +200,12 @@ class NewProductPage(ttk.Frame):
         self.nom_entry.config(state="disabled")
         self.type_var.set(product.get("type_test", ""))
         self.numero_var.set(product.get("numero", ""))
+        self.numero_entry.config(state="disabled")
         self.date_var.set(product.get("date_produit") or self._today())
         self.specificite_text.delete("1.0", tk.END)
         self.specificite_text.insert("1.0", product.get("specificite", ""))
         self.status_var.set("")
-        self._last_nom = product.get("nom", folder_name)
+        self._last_folder = folder_name
         self.test_btn.config(state=tk.NORMAL)
         self.title_var.set("Modifier le produit")
         self.save_btn.config(text="Enregistrer les modifications")
@@ -215,8 +216,8 @@ class NewProductPage(ttk.Frame):
             messagebox.showwarning("Produit", "Le nom du produit est obligatoire.")
             return
         numero = self.numero_var.get().strip()
-        if numero and not re.fullmatch(r"\d{4}", numero):
-            messagebox.showwarning("Produit", "Le numéro doit comporter exactement 4 chiffres.")
+        if not re.fullmatch(r"\d{4}", numero):
+            messagebox.showwarning("Produit", "Le numéro est obligatoire et doit comporter exactement 4 chiffres.")
             return
         type_test = self.type_var.get()
         if not type_test:
@@ -233,17 +234,24 @@ class NewProductPage(ttk.Frame):
 
         if self.editing_folder:
             audio_io.update_product(self.editing_folder, numero, specificite, type_test, date_produit)
+            self._last_folder = self.editing_folder
             self.status_var.set(f"Produit « {nom} » mis à jour.")
         else:
-            audio_io.register_product(nom, numero, specificite, type_test, date_produit)
+            if audio_io.product_exists(nom, numero):
+                messagebox.showwarning(
+                    "Produit",
+                    f"Un produit « {nom} » avec le numéro {numero} existe déjà.\n"
+                    "Un même nom peut être réutilisé, mais pas avec le même numéro.",
+                )
+                return
+            folder = audio_io.register_product(nom, numero, specificite, type_test, date_produit)
+            self._last_folder = folder.name
             self.status_var.set(f"Produit « {nom} » enregistré.")
 
-        self._last_nom = nom
         self.test_btn.config(state=tk.NORMAL)
 
     def on_go_test(self):
-        test_page = self.app.pages[TestPage]
-        test_page.product_var.set(self._last_nom)
+        self.app.pages[TestPage].select_product_by_folder(self._last_folder)
         self.app.show_page(TestPage)
 
 
@@ -255,6 +263,7 @@ class TestPage(ttk.Frame):
         self.sample_rate = None
         self.reference_data = None
         self.reference_sample_rate = None
+        self._product_by_label = {}
 
         header = ttk.Frame(self)
         header.pack(side=tk.TOP, fill=tk.X)
@@ -314,10 +323,25 @@ class TestPage(ttk.Frame):
         self.analysis_view.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
     def on_show(self):
-        products = [p["nom"] for p in audio_io.list_registered_products()]
-        self.product_combo["values"] = products
-        if products and self.product_var.get() not in products:
-            self.product_var.set(products[0])
+        self._product_by_label = {}
+        labels = []
+        for product in audio_io.list_registered_products():
+            nom = product.get("nom", product["folder"])
+            numero = product.get("numero", "")
+            label = f"{nom} ({numero})" if numero else f"{nom} [{product['folder']}]"
+            self._product_by_label[label] = product["folder"]
+            labels.append(label)
+        self.product_combo["values"] = labels
+        if labels and self.product_var.get() not in labels:
+            self.product_var.set(labels[0])
+
+    def select_product_by_folder(self, folder_name):
+        """Utilisé par la page Nouveau produit après création/édition."""
+        self.on_show()
+        for label, folder in self._product_by_label.items():
+            if folder == folder_name:
+                self.product_var.set(label)
+                return
 
     def on_record(self):
         self.record_btn.config(state=tk.DISABLED)
@@ -390,7 +414,8 @@ class TestPage(ttk.Frame):
     def on_save(self):
         if self.data is None:
             return
-        if not self.product_var.get():
+        folder_name = self._product_by_label.get(self.product_var.get())
+        if not folder_name:
             messagebox.showwarning("Produit", "Sélectionnez ou créez d'abord un produit.")
             return
         freqs, magnitude = analysis.compute_fft(self.data, self.sample_rate)
@@ -398,7 +423,7 @@ class TestPage(ttk.Frame):
         path = audio_io.save_recording(
             self.data,
             self.sample_rate,
-            self.product_var.get(),
+            folder_name,
             cas=self.cas_var.get(),
             remarques=self.remarques_var.get(),
             dominant_frequencies=dominant,
