@@ -50,7 +50,7 @@ class AudioAnalysisView(ttk.Frame):
     def plot(self, data, sample_rate, reference=None):
         """Affiche (data, sample_rate). `reference` optionnel : (data_ref, sr_ref) superposée sur la FFT.
 
-        Renvoie la liste de comparaison (fréquence_ref, fréquence_actuelle, écart Hz, écart %),
+        Renvoie la liste de comparaison (fréquence_ref, fréquence_actuelle, écart Hz, écart %, fiable),
         vide si aucune référence n'est fournie.
         """
         self.ax_wave.clear()
@@ -64,30 +64,52 @@ class AudioAnalysisView(ttk.Frame):
 
         self.ax_fft.clear()
         freqs, magnitude = analysis.compute_fft(data, sample_rate)
-        self.ax_fft.plot(freqs, magnitude, linewidth=0.8, color="tab:blue", label="Actuel")
+        current_peaks = analysis.find_dominant_frequencies(freqs, magnitude)
+        self.ax_fft.plot(freqs, magnitude, linewidth=1.1, color="tab:blue", label="Actuel")
+        if current_peaks:
+            self.ax_fft.scatter(
+                [f for f, _ in current_peaks], [m for _, m in current_peaks], color="tab:blue", zorder=5, s=35
+            )
         self.ax_fft.set_title("Spectre de fréquence (FFT)")
         self.ax_fft.set_xlabel("Fréquence (Hz)")
         self.ax_fft.set_ylabel("Amplitude")
-        for freq, mag in analysis.find_dominant_frequencies(freqs, magnitude):
-            self.ax_fft.annotate(
-                f"{freq:.0f} Hz", xy=(freq, mag), xytext=(0, 8), textcoords="offset points", fontsize=8, ha="center"
-            )
+        self.ax_fft.grid(True, alpha=0.3)
+
+        max_freq_of_interest = max((f for f, _ in current_peaks), default=0.0)
 
         comparisons = []
         if reference is not None:
             ref_data, ref_sr = reference
             freqs_ref, magnitude_ref = analysis.compute_fft(ref_data, ref_sr)
+            reference_peaks = analysis.find_dominant_frequencies(freqs_ref, magnitude_ref)
             self.ax_fft.plot(
                 freqs_ref,
                 magnitude_ref,
-                linewidth=0.8,
+                linewidth=1.1,
                 linestyle="--",
-                alpha=0.7,
+                alpha=0.8,
                 color="tab:orange",
                 label="Référence",
             )
-            self.ax_fft.legend(fontsize=8)
+            if reference_peaks:
+                self.ax_fft.scatter(
+                    [f for f, _ in reference_peaks],
+                    [m for _, m in reference_peaks],
+                    color="tab:orange",
+                    marker="D",
+                    zorder=5,
+                    s=35,
+                )
+                max_freq_of_interest = max(max_freq_of_interest, max(f for f, _ in reference_peaks))
+            self.ax_fft.legend(fontsize=9, loc="upper right")
             comparisons = analysis.compare_dominant_frequencies(freqs_ref, magnitude_ref, freqs, magnitude)
+
+        # Zoom automatique : tout le contenu utile (moteurs/roulements) est en général très en
+        # dessous du maximum théorique (22 kHz à 44.1 kHz), sans ce zoom les pics sont écrasés
+        # dans un coin du graphe.
+        if max_freq_of_interest > 0:
+            self.ax_fft.set_xlim(0, max_freq_of_interest * 1.4)
+
         self.fig_fft.tight_layout(pad=3)
         self.canvas_fft.draw()
 
@@ -97,6 +119,8 @@ class AudioAnalysisView(ttk.Frame):
         self.ax_spec.set_title("Spectrogramme")
         self.ax_spec.set_xlabel("Temps (s)")
         self.ax_spec.set_ylabel("Fréquence (Hz)")
+        if max_freq_of_interest > 0:
+            self.ax_spec.set_ylim(0, max_freq_of_interest * 1.4)
         self.fig_spec.tight_layout(pad=3)
         self.canvas_spec.draw()
 
@@ -311,12 +335,13 @@ class TestPage(ttk.Frame):
         self.reference_label_var = tk.StringVar(value="Aucune référence chargée")
         ttk.Label(ref_header, textvariable=self.reference_label_var, padding=(10, 0)).pack(side=tk.LEFT)
 
-        columns = ("ref", "cur", "delta_hz", "delta_pct")
-        headings = ("Référence (Hz)", "Actuel (Hz)", "Écart (Hz)", "Écart (%)")
+        columns = ("ref", "cur", "delta_hz", "delta_pct", "statut")
+        headings = ("Référence (Hz)", "Actuel (Hz)", "Écart (Hz)", "Écart (%)", "Statut")
         self.comparison_tree = ttk.Treeview(ref_frame, columns=columns, show="headings", height=4)
         for col, label in zip(columns, headings, strict=True):
             self.comparison_tree.heading(col, text=label)
-            self.comparison_tree.column(col, width=140, anchor=tk.CENTER)
+            self.comparison_tree.column(col, width=140 if col != "statut" else 170, anchor=tk.CENTER)
+        self.comparison_tree.tag_configure("incertain", foreground="#999999")
         self.comparison_tree.pack(side=tk.TOP, fill=tk.X, pady=(5, 0))
 
         self.analysis_view = AudioAnalysisView(self)
@@ -438,9 +463,13 @@ class TestPage(ttk.Frame):
 
         for row in self.comparison_tree.get_children():
             self.comparison_tree.delete(row)
-        for freq_ref, freq_cur, delta_hz, delta_pct in comparisons:
+        for freq_ref, freq_cur, delta_hz, delta_pct, fiable in comparisons:
+            statut = "Dérive" if fiable else "Pic différent (?)"
             self.comparison_tree.insert(
-                "", tk.END, values=(f"{freq_ref:.0f}", f"{freq_cur:.0f}", f"{delta_hz:+.0f}", f"{delta_pct:+.1f}")
+                "",
+                tk.END,
+                values=(f"{freq_ref:.0f}", f"{freq_cur:.0f}", f"{delta_hz:+.0f}", f"{delta_pct:+.1f}", statut),
+                tags=() if fiable else ("incertain",),
             )
 
 
