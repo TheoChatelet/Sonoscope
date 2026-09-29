@@ -4,6 +4,7 @@ import re
 import threading
 import tkinter as tk
 from datetime import datetime
+from itertools import zip_longest
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -65,8 +66,9 @@ class AudioAnalysisView(ttk.Frame):
     def plot(self, data, sample_rate, reference=None):
         """Affiche (data, sample_rate). `reference` optionnel : (data_ref, sr_ref) superposée sur la FFT.
 
-        Renvoie la liste de comparaison (fréquence_ref, fréquence_actuelle, écart Hz, écart %, fiable),
-        vide si aucune référence n'est fournie.
+        Renvoie (pics_actuels, pics_référence), chacun une liste de (fréquence, amplitude) triée
+        par fréquence croissante (même ordre que l'axe des graphes) - pics_référence est vide si
+        aucune référence n'est fournie.
         """
         self.ax_wave.clear()
         t = np.linspace(0, len(data) / sample_rate, len(data))
@@ -93,6 +95,7 @@ class AudioAnalysisView(ttk.Frame):
         max_freq_of_interest = max((f for f, _ in current_peaks), default=0.0)
 
         comparisons = []
+        reference_peaks = []
         if reference is not None:
             ref_data, ref_sr = reference
             freqs_ref, magnitude_ref = analysis.compute_fft(ref_data, ref_sr)
@@ -139,7 +142,7 @@ class AudioAnalysisView(ttk.Frame):
         self.fig_spec.tight_layout(pad=3)
         self.canvas_spec.draw()
 
-        return comparisons
+        return sorted(current_peaks, key=lambda p: p[0]), sorted(reference_peaks, key=lambda p: p[0])
 
     def _apply_fft_zoom(self):
         if self._fft_zoom_xlim is None:
@@ -413,13 +416,12 @@ class TestPage(ttk.Frame):
         self.reference_label_var = tk.StringVar(value="Aucune référence chargée")
         ttk.Label(ref_header, textvariable=self.reference_label_var, padding=(10, 0)).pack(side=tk.LEFT)
 
-        columns = ("ref", "cur", "delta_hz", "delta_pct", "statut")
-        headings = ("Référence (Hz)", "Actuel (Hz)", "Écart (Hz)", "Écart (%)", "Statut")
-        self.comparison_tree = ttk.Treeview(ref_frame, columns=columns, show="headings", height=4)
+        columns = ("ref_freq", "ref_int", "cur_freq", "cur_int")
+        headings = ("Référence - Fréquence (Hz)", "Référence - Intensité (%)", "Actuel - Fréquence (Hz)", "Actuel - Intensité (%)")
+        self.comparison_tree = ttk.Treeview(ref_frame, columns=columns, show="headings", height=5)
         for col, label in zip(columns, headings, strict=True):
             self.comparison_tree.heading(col, text=label)
-            self.comparison_tree.column(col, width=140 if col != "statut" else 170, anchor=tk.CENTER)
-        self.comparison_tree.tag_configure("incertain", foreground="#999999")
+            self.comparison_tree.column(col, width=170, anchor=tk.CENTER)
         self.comparison_tree.pack(side=tk.TOP, fill=tk.X, pady=(5, 0))
 
         self.analysis_view = AudioAnalysisView(self)
@@ -537,23 +539,25 @@ class TestPage(ttk.Frame):
         reference = None
         if self.reference_data is not None:
             reference = (self.reference_data, self.reference_sample_rate)
-        comparisons = self.analysis_view.plot(self.data, self.sample_rate, reference=reference)
+        current_peaks, reference_peaks = self.analysis_view.plot(self.data, self.sample_rate, reference=reference)
 
         for row in self.comparison_tree.get_children():
             self.comparison_tree.delete(row)
-        for freq_ref, freq_cur, _delta_hz, _delta_pct, fiable in comparisons:
-            # Écart en Hz/% recalculé à partir des fréquences arrondies affichées, pour que le
-            # tableau reste cohérent si on le recalcule à la main (sinon le % venait des valeurs
-            # exactes non arrondies et ne correspondait pas aux Hz affichés).
-            freq_ref_r, freq_cur_r = round(freq_ref), round(freq_cur)
-            delta_hz_r = freq_cur_r - freq_ref_r
-            delta_pct_r = (delta_hz_r / freq_ref_r * 100) if freq_ref_r else 0.0
-            statut = "Dérive" if fiable else "Pic différent (?)"
+
+        # Pics référence et actuel affichés côte à côte, chacun trié par fréquence croissante
+        # (même ordre que l'axe du graphe FFT) plutôt qu'appariés : plus de calcul d'écart/%
+        # source de confusion, juste les pics de chaque côté avec leur intensité. L'intensité est
+        # normalisée en % du pic le plus fort de son propre enregistrement (l'amplitude FFT brute,
+        # de l'ordre de 0.0001, n'est pas parlante telle quelle).
+        ref_max = max((mag for _, mag in reference_peaks), default=0.0)
+        cur_max = max((mag for _, mag in current_peaks), default=0.0)
+        for ref_peak, cur_peak in zip_longest(reference_peaks, current_peaks):
+            ref_freq = f"{ref_peak[0]:.0f}" if ref_peak else ""
+            ref_intensity = f"{ref_peak[1] / ref_max * 100:.0f}" if ref_peak and ref_max else ""
+            cur_freq = f"{cur_peak[0]:.0f}" if cur_peak else ""
+            cur_intensity = f"{cur_peak[1] / cur_max * 100:.0f}" if cur_peak and cur_max else ""
             self.comparison_tree.insert(
-                "",
-                tk.END,
-                values=(freq_ref_r, freq_cur_r, f"{delta_hz_r:+d}", f"{delta_pct_r:+.1f}", statut),
-                tags=() if fiable else ("incertain",),
+                "", tk.END, values=(ref_freq, ref_intensity, cur_freq, cur_intensity)
             )
 
 
