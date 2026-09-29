@@ -482,12 +482,18 @@ class TestPage(ttk.Frame):
 
         for row in self.comparison_tree.get_children():
             self.comparison_tree.delete(row)
-        for freq_ref, freq_cur, delta_hz, delta_pct, fiable in comparisons:
+        for freq_ref, freq_cur, _delta_hz, _delta_pct, fiable in comparisons:
+            # Écart en Hz/% recalculé à partir des fréquences arrondies affichées, pour que le
+            # tableau reste cohérent si on le recalcule à la main (sinon le % venait des valeurs
+            # exactes non arrondies et ne correspondait pas aux Hz affichés).
+            freq_ref_r, freq_cur_r = round(freq_ref), round(freq_cur)
+            delta_hz_r = freq_cur_r - freq_ref_r
+            delta_pct_r = (delta_hz_r / freq_ref_r * 100) if freq_ref_r else 0.0
             statut = "Dérive" if fiable else "Pic différent (?)"
             self.comparison_tree.insert(
                 "",
                 tk.END,
-                values=(f"{freq_ref:.0f}", f"{freq_cur:.0f}", f"{delta_hz:+.0f}", f"{delta_pct:+.1f}", statut),
+                values=(freq_ref_r, freq_cur_r, f"{delta_hz_r:+d}", f"{delta_pct_r:+.1f}", statut),
                 tags=() if fiable else ("incertain",),
             )
 

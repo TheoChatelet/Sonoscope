@@ -15,17 +15,34 @@ def compute_fft(signal: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.nd
 
 
 def find_dominant_frequencies(
-    freqs: np.ndarray, magnitude: np.ndarray, num_peaks: int = 5, min_freq: float = 20.0
+    freqs: np.ndarray,
+    magnitude: np.ndarray,
+    num_peaks: int = 5,
+    min_freq: float = 20.0,
+    min_separation_hz: float = 3.0,
 ) -> list[tuple[float, float]]:
-    """Renvoie les `num_peaks` pics de fréquence les plus marqués, triés par amplitude décroissante."""
+    """Renvoie les `num_peaks` pics de fréquence les plus marqués, triés par amplitude décroissante.
+
+    Les pics à moins de `min_separation_hz` d'un pic déjà retenu sont ignorés : la fuite
+    spectrale fait souvent apparaître plusieurs pics adjacents autour d'une même résonance
+    (ex. 95/96/96/97 Hz), qui ne sont pas des fréquences physiquement distinctes.
+    """
     mask = freqs >= min_freq
     freqs, magnitude = freqs[mask], magnitude[mask]
     if magnitude.size == 0 or magnitude.max() == 0:
         return []
 
     peak_idx, _ = find_peaks(magnitude, height=magnitude.max() * 0.05)
-    top = sorted(peak_idx, key=lambda i: magnitude[i], reverse=True)[:num_peaks]
-    return sorted(((freqs[i], magnitude[i]) for i in top), key=lambda p: p[1], reverse=True)
+    candidates = sorted(peak_idx, key=lambda i: magnitude[i], reverse=True)
+
+    kept = []
+    for i in candidates:
+        if len(kept) >= num_peaks:
+            break
+        if all(abs(freqs[i] - freqs[j]) >= min_separation_hz for j in kept):
+            kept.append(i)
+
+    return sorted(((freqs[i], magnitude[i]) for i in kept), key=lambda p: p[1], reverse=True)
 
 
 def compare_dominant_frequencies(
