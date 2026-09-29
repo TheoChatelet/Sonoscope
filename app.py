@@ -44,9 +44,10 @@ class AudioAnalysisView(ttk.Frame):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(self.notebook, "Forme d'onde")
-        self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT")
-        self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(self.notebook, "Spectrogramme")
+        _, self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(self.notebook, "Forme d'onde")
+        _, self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT")
+        _, self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(self.notebook, "Spectrogramme")
+        self._cmp_tab, self.fig_cmp, self.ax_cmp, self.canvas_cmp = self._add_tab(self.notebook, "Comparaison")
 
         self._fft_zoom_xlim = None
         self._fft_full_xlim = None
@@ -59,7 +60,7 @@ class AudioAnalysisView(ttk.Frame):
         ax = figure.add_subplot(111)
         canvas = FigureCanvasTkAgg(figure, master=tab)
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        return figure, ax, canvas
+        return tab, figure, ax, canvas
 
     def plot(self, data, sample_rate, reference=None):
         """Affiche (data, sample_rate). `reference` optionnel : (data_ref, sr_ref) superposée sur la FFT.
@@ -118,6 +119,8 @@ class AudioAnalysisView(ttk.Frame):
             self.ax_fft.legend(fontsize=9, loc="upper right")
             comparisons = analysis.compare_dominant_frequencies(freqs_ref, magnitude_ref, freqs, magnitude)
 
+        self._redraw_comparison_chart(comparisons)
+
         # Zoom automatique : tout le contenu utile (moteurs/roulements) est en général très en
         # dessous du maximum théorique (22 kHz à 44.1 kHz), sans ce zoom les pics sont écrasés
         # dans un coin du graphe. La case à cocher permet de repasser en vue complète.
@@ -144,6 +147,62 @@ class AudioAnalysisView(ttk.Frame):
         xlim = self._fft_zoom_xlim if self.zoom_var.get() else self._fft_full_xlim
         self.ax_fft.set_xlim(*xlim)
         self.canvas_fft.draw()
+
+    def _redraw_comparison_chart(self, comparisons):
+        """Une ligne horizontale par pic : losange orange = référence, rond bleu = actuel.
+
+        Plus lisible que de superposer deux spectres complets pour répondre à "qu'est-ce qui a
+        bougé, et de combien" - l'écart entre les deux points saute aux yeux, valeur en toutes
+        lettres à côté.
+        """
+        self.ax_cmp.clear()
+        if not comparisons:
+            self.ax_cmp.set_title("Comparaison")
+            self.ax_cmp.text(
+                0.5,
+                0.5,
+                "Chargez une référence pour comparer",
+                ha="center",
+                va="center",
+                transform=self.ax_cmp.transAxes,
+                color="#999999",
+            )
+            self.ax_cmp.set_xticks([])
+            self.ax_cmp.set_yticks([])
+            self.canvas_cmp.draw()
+            return
+
+        ordered = sorted(comparisons, key=lambda c: c[0])
+        for y, (freq_ref, freq_cur, _delta_hz, delta_pct, fiable) in enumerate(ordered):
+            color = "tab:blue" if fiable else "#999999"
+            self.ax_cmp.plot([freq_ref, freq_cur], [y, y], color=color, linewidth=1.5, zorder=1)
+            self.ax_cmp.scatter([freq_ref], [y], color="tab:orange", marker="D", zorder=3, s=70)
+            self.ax_cmp.scatter([freq_cur], [y], color="tab:blue", zorder=3, s=70)
+            label = (
+                f"{freq_ref:.0f} → {freq_cur:.0f} Hz  ({delta_pct:+.1f}%)"
+                if fiable
+                else f"{freq_ref:.0f} Hz → pic différent ({freq_cur:.0f} Hz)"
+            )
+            self.ax_cmp.annotate(
+                label,
+                xy=(max(freq_ref, freq_cur), y),
+                xytext=(10, 0),
+                textcoords="offset points",
+                va="center",
+                fontsize=9,
+            )
+
+        self.ax_cmp.set_yticks([])
+        self.ax_cmp.set_ylim(-1, len(ordered))
+        self.ax_cmp.set_xlabel("Fréquence (Hz)")
+        self.ax_cmp.set_title("Référence (losange orange) → Actuel (rond bleu)")
+        self.ax_cmp.grid(True, axis="x", alpha=0.3)
+        # marge à droite pour laisser la place aux étiquettes
+        xmax = max(max(c[0], c[1]) for c in ordered)
+        self.ax_cmp.set_xlim(0, xmax * 1.6)
+        self.fig_cmp.tight_layout(pad=3)
+        self.canvas_cmp.draw()
+        self.notebook.select(self._cmp_tab)
 
 
 class HomePage(ttk.Frame):
