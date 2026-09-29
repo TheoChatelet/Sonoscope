@@ -30,12 +30,26 @@ class AudioAnalysisView(ttk.Frame):
 
     def __init__(self, parent):
         super().__init__(parent)
+
+        toolbar = ttk.Frame(self)
+        toolbar.pack(side=tk.TOP, fill=tk.X)
+        self.zoom_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            toolbar,
+            text="Zoom auto sur les pics (Spectre FFT)",
+            variable=self.zoom_var,
+            command=self._apply_fft_zoom,
+        ).pack(side=tk.LEFT, padx=5, pady=3)
+
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(self.notebook, "Forme d'onde")
         self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT")
         self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(self.notebook, "Spectrogramme")
+
+        self._fft_zoom_xlim = None
+        self._fft_full_xlim = None
 
     @staticmethod
     def _add_tab(notebook, title):
@@ -106,12 +120,12 @@ class AudioAnalysisView(ttk.Frame):
 
         # Zoom automatique : tout le contenu utile (moteurs/roulements) est en général très en
         # dessous du maximum théorique (22 kHz à 44.1 kHz), sans ce zoom les pics sont écrasés
-        # dans un coin du graphe.
-        if max_freq_of_interest > 0:
-            self.ax_fft.set_xlim(0, max_freq_of_interest * 1.4)
+        # dans un coin du graphe. La case à cocher permet de repasser en vue complète.
+        self._fft_full_xlim = (0, freqs[-1] if len(freqs) else 1.0)
+        self._fft_zoom_xlim = (0, max_freq_of_interest * 1.4) if max_freq_of_interest > 0 else self._fft_full_xlim
 
         self.fig_fft.tight_layout(pad=3)
-        self.canvas_fft.draw()
+        self._apply_fft_zoom()
 
         self.ax_spec.clear()
         f_spec, t_spec, sxx_db = analysis.compute_spectrogram(data, sample_rate)
@@ -123,6 +137,13 @@ class AudioAnalysisView(ttk.Frame):
         self.canvas_spec.draw()
 
         return comparisons
+
+    def _apply_fft_zoom(self):
+        if self._fft_zoom_xlim is None:
+            return
+        xlim = self._fft_zoom_xlim if self.zoom_var.get() else self._fft_full_xlim
+        self.ax_fft.set_xlim(*xlim)
+        self.canvas_fft.draw()
 
 
 class HomePage(ttk.Frame):
