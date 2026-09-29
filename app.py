@@ -375,6 +375,18 @@ class TestPage(ttk.Frame):
         ttk.Button(header, text="< Accueil", command=lambda: app.show_page(HomePage)).pack(side=tk.LEFT)
         ttk.Label(header, text="Faire un test", font=("", 14, "bold")).pack(side=tk.LEFT, padx=15)
 
+        ttk.Label(
+            self,
+            text=(
+                "On enregistre le bruit du produit pendant son cycle de test (KT/LT) pour repérer une "
+                "dérive de fréquence par rapport à une référence (ex. produit neuf) : un signe d'usure "
+                "mécanique (roulement, moteur) avant qu'elle ne devienne audible ou critique."
+            ),
+            foreground="#666666",
+            wraplength=1000,
+            justify=tk.LEFT,
+        ).pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+
         product_row = ttk.Frame(self, padding=(0, 10, 0, 0))
         product_row.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(product_row, text="Produit :").pack(side=tk.LEFT)
