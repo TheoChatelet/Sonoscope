@@ -9,7 +9,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
 from sonoscope import analysis, audio_io
@@ -46,21 +46,28 @@ class AudioAnalysisView(ttk.Frame):
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         _, self.fig_wave, self.ax_wave, self.canvas_wave = self._add_tab(self.notebook, "Forme d'onde")
-        _, self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT")
+        # with_toolbar=True : ajoute les boutons zoom/déplacement de matplotlib sous ce graphe,
+        # pour naviguer manuellement dans le spectre en plus du zoom auto sur les pics.
+        _, self.fig_fft, self.ax_fft, self.canvas_fft = self._add_tab(self.notebook, "Spectre FFT", with_toolbar=True)
         _, self.fig_spec, self.ax_spec, self.canvas_spec = self._add_tab(self.notebook, "Spectrogramme")
         self._cmp_tab, self.fig_cmp, self.ax_cmp, self.canvas_cmp = self._add_tab(self.notebook, "Comparaison")
 
         self._fft_zoom_xlim = None
         self._fft_full_xlim = None
+        self._spec_cbar = None  # colorbar du spectrogramme, recréée à chaque tracé (voir plot())
 
     @staticmethod
-    def _add_tab(notebook, title):
+    def _add_tab(notebook, title, with_toolbar=False):
         tab = ttk.Frame(notebook)
         notebook.add(tab, text=title)
         figure = Figure(figsize=(10, 6), dpi=100)
         ax = figure.add_subplot(111)
         canvas = FigureCanvasTkAgg(figure, master=tab)
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        if with_toolbar:
+            nav_toolbar = NavigationToolbar2Tk(canvas, tab, pack_toolbar=False)
+            nav_toolbar.update()
+            nav_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         return tab, figure, ax, canvas
 
     def plot(self, data, sample_rate, reference=None):
@@ -133,12 +140,23 @@ class AudioAnalysisView(ttk.Frame):
         self.fig_fft.tight_layout(pad=3)
         self._apply_fft_zoom()
 
+        # La colorbar précédente doit être retirée AVANT de vider ax_spec : elle a rétréci
+        # ax_spec pour se loger à côté, et .clear() efface l'info dont .remove() a besoin pour
+        # lui rendre sa place si on inverse l'ordre.
+        if self._spec_cbar is not None:
+            self._spec_cbar.remove()
+            self._spec_cbar = None
         self.ax_spec.clear()
         f_spec, t_spec, sxx_db = analysis.compute_spectrogram(data, sample_rate)
-        self.ax_spec.pcolormesh(t_spec, f_spec, sxx_db, shading="auto", cmap="viridis")
+        # vmin/vmax non précisés : pcolormesh cale automatiquement l'échelle de couleur sur le
+        # min/max réel de CET enregistrement (pas une échelle fixe), pour rester lisible aussi
+        # bien sur un son calme que sur un son fort. La colorbar rend cette échelle visible.
+        mesh = self.ax_spec.pcolormesh(t_spec, f_spec, sxx_db, shading="auto", cmap="viridis")
         self.ax_spec.set_title("Spectrogramme")
         self.ax_spec.set_xlabel("Temps (s)")
         self.ax_spec.set_ylabel("Fréquence (Hz)")
+        self._spec_cbar = self.fig_spec.colorbar(mesh, ax=self.ax_spec)
+        self._spec_cbar.set_label("Amplitude (dB)")
         self.fig_spec.tight_layout(pad=3)
         self.canvas_spec.draw()
 
@@ -425,6 +443,9 @@ class TestPage(ttk.Frame):
         ref_header = ttk.Frame(ref_frame)
         ref_header.pack(side=tk.TOP, fill=tk.X)
         ttk.Button(ref_header, text="Charger une référence...", command=self.on_load_reference).pack(side=tk.LEFT)
+        ttk.Button(ref_header, text="Retirer la référence", command=self.on_clear_reference).pack(
+            side=tk.LEFT, padx=(5, 0)
+        )
         self.reference_label_var = tk.StringVar(value="Aucune référence chargée")
         ttk.Label(ref_header, textvariable=self.reference_label_var, padding=(10, 0)).pack(side=tk.LEFT)
 
@@ -518,6 +539,15 @@ class TestPage(ttk.Frame):
         """Utilisé aussi par la page Produits pour comparer un test historique."""
         self.reference_data, self.reference_sample_rate = data, sr
         self.reference_label_var.set(label)
+        if self.data is not None:
+            self._refresh_plot()
+
+    def on_clear_reference(self):
+        if self.reference_data is None:
+            return
+        self.reference_data = None
+        self.reference_sample_rate = None
+        self.reference_label_var.set("Aucune référence chargée")
         if self.data is not None:
             self._refresh_plot()
 
