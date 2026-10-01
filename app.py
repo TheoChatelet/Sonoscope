@@ -666,6 +666,34 @@ class ProductsPage(ttk.Frame):
         self.ax_trend = self.fig_trend.add_subplot(111)
         self.canvas_trend = FigureCanvasTkAgg(self.fig_trend, master=trend_tab)
         self.canvas_trend.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Histogramme : regroupe la fréquence dominante de TOUS les tests d'un produit en
+        # tranches, pour voir si les tests restent regroupés (stable) ou s'étalent (dérive) -
+        # complémentaire de la Tendance qui montre le même genre d'info mais dans l'ordre
+        # chronologique plutôt que par fréquence.
+        hist_tab = ttk.Frame(self.analysis_view.notebook)
+        self.analysis_view.notebook.insert(1, hist_tab, text="Histogramme")
+        hist_controls = ttk.Frame(hist_tab)
+        hist_controls.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(hist_controls, text="Largeur des tranches (Hz) :").pack(side=tk.LEFT, padx=5, pady=3)
+        self.hist_bin_var = tk.IntVar(value=50)
+        hist_bin_spin = ttk.Spinbox(
+            hist_controls,
+            from_=5,
+            to=500,
+            increment=5,
+            textvariable=self.hist_bin_var,
+            width=6,
+            command=self._redraw_histogram,
+        )
+        hist_bin_spin.pack(side=tk.LEFT)
+        hist_bin_spin.bind("<Return>", lambda _event: self._redraw_histogram())
+        hist_bin_spin.bind("<FocusOut>", lambda _event: self._redraw_histogram())
+        self.fig_hist = Figure(figsize=(10, 6), dpi=100)
+        self.ax_hist = self.fig_hist.add_subplot(111)
+        self.canvas_hist = FigureCanvasTkAgg(self.fig_hist, master=hist_tab)
+        self.canvas_hist.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
         self.analysis_view.notebook.select(trend_tab)
 
         body.add(right, weight=2)
@@ -730,6 +758,7 @@ class ProductsPage(ttk.Frame):
                     ),
                 )
         self._redraw_trend()
+        self._redraw_histogram()
 
     def _redraw_trend(self):
         self.ax_trend.clear()
@@ -749,6 +778,40 @@ class ProductsPage(ttk.Frame):
             self.fig_trend.autofmt_xdate()
         self.fig_trend.tight_layout(pad=3)
         self.canvas_trend.draw()
+
+    def _redraw_histogram(self):
+        self.ax_hist.clear()
+        self.ax_hist.set_title("Distribution des fréquences dominantes")
+        self.ax_hist.set_xlabel("Fréquence (Hz)")
+        self.ax_hist.set_ylabel("Nombre de tests")
+
+        freqs = [
+            record["frequences_dominantes"][0][0]
+            for record in self._records
+            if record.get("frequences_dominantes")
+        ]
+        if freqs:
+            bin_width = max(self.hist_bin_var.get(), 1)
+            # Bornes des tranches alignées sur des multiples de bin_width (ex. 0-50, 50-100...)
+            # plutôt que sur min(freqs)/max(freqs), pour des intervalles lisibles et stables
+            # même si on change juste un ou deux tests.
+            bin_min = (min(freqs) // bin_width) * bin_width
+            bin_max = (max(freqs) // bin_width + 1) * bin_width
+            bins = np.arange(bin_min, bin_max + bin_width, bin_width)
+            self.ax_hist.hist(freqs, bins=bins, color="tab:blue", edgecolor="white")
+            self.ax_hist.grid(True, axis="y", alpha=0.3)
+        else:
+            self.ax_hist.text(
+                0.5,
+                0.5,
+                "Aucun test avec fréquence dominante",
+                ha="center",
+                va="center",
+                transform=self.ax_hist.transAxes,
+                color="#999999",
+            )
+        self.fig_hist.tight_layout(pad=3)
+        self.canvas_hist.draw()
 
     def _selected_test_record(self):
         selection = self.tests_tree.selection()
