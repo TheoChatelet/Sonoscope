@@ -782,8 +782,8 @@ class ProductsPage(ttk.Frame):
     def _redraw_histogram(self):
         self.ax_hist.clear()
         self.ax_hist.set_title("Distribution des fréquences dominantes")
-        self.ax_hist.set_xlabel("Fréquence (Hz)")
-        self.ax_hist.set_ylabel("Nombre de tests")
+        self.ax_hist.set_xlabel("Nombre de tests")
+        self.ax_hist.set_ylabel("Fréquence (Hz)")
 
         freqs = [
             record["frequences_dominantes"][0][0]
@@ -798,8 +798,11 @@ class ProductsPage(ttk.Frame):
             bin_min = (min(freqs) // bin_width) * bin_width
             bin_max = (max(freqs) // bin_width + 1) * bin_width
             bins = np.arange(bin_min, bin_max + bin_width, bin_width)
-            self.ax_hist.hist(freqs, bins=bins, color="tab:blue", edgecolor="white")
-            self.ax_hist.grid(True, axis="y", alpha=0.3)
+            counts, edges = np.histogram(freqs, bins=bins)
+            # barh : barres horizontales, fréquence sur l'axe Y (comme demandé) et nombre
+            # d'occurrences sur l'axe X.
+            self.ax_hist.barh(edges[:-1], counts, height=bin_width, align="edge", color="tab:blue", edgecolor="white")
+            self.ax_hist.grid(True, axis="x", alpha=0.3)
         else:
             self.ax_hist.text(
                 0.5,
