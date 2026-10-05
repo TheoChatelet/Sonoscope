@@ -689,6 +689,26 @@ class ProductsPage(ttk.Frame):
         hist_bin_spin.pack(side=tk.LEFT)
         hist_bin_spin.bind("<Return>", lambda _event: self._redraw_histogram())
         hist_bin_spin.bind("<FocusOut>", lambda _event: self._redraw_histogram())
+
+        # Deux modes : "Pics détectés" (rapide, basé sur les pics déjà sauvegardés dans les
+        # métadonnées de chaque test) ou "Spectre complet" (recharge chaque fichier .wav du
+        # produit et recalcule sa FFT entière, pas seulement ses ~5 pics dominants).
+        self.hist_mode_var = tk.StringVar(value="peaks")
+        ttk.Radiobutton(
+            hist_controls,
+            text="Pics détectés",
+            value="peaks",
+            variable=self.hist_mode_var,
+            command=self._redraw_histogram,
+        ).pack(side=tk.LEFT, padx=(15, 0))
+        ttk.Radiobutton(
+            hist_controls,
+            text="Spectre complet (plus lent)",
+            value="full",
+            variable=self.hist_mode_var,
+            command=self._redraw_histogram,
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
         self.fig_hist = Figure(figsize=(10, 6), dpi=100)
         self.ax_hist = self.fig_hist.add_subplot(111)
         self.canvas_hist = FigureCanvasTkAgg(self.fig_hist, master=hist_tab)
@@ -781,36 +801,60 @@ class ProductsPage(ttk.Frame):
 
     def _redraw_histogram(self):
         self.ax_hist.clear()
-        self.ax_hist.set_title("Fréquences détectées (tous les pics, tous les tests)")
-        self.ax_hist.set_xlabel("Nombre d'occurrences")
-        self.ax_hist.set_ylabel("Fréquence (Hz)")
+        bin_width = max(self.hist_bin_var.get(), 1)
 
-        # Tous les pics de tous les tests (pas seulement le pic dominant de chaque test) : le
-        # nombre de fois qu'une fréquence ressort, peu importe le nombre de tests ou si elle
-        # était la plus forte de son test.
-        freqs = [
-            freq
-            for record in self._records
-            for freq, _magnitude in (record.get("frequences_dominantes") or [])
-        ]
-        if freqs:
-            bin_width = max(self.hist_bin_var.get(), 1)
+        if self.hist_mode_var.get() == "full":
+            self.ax_hist.set_title("Spectre cumulé (toutes fréquences, tous les tests)")
+            self.ax_hist.set_xlabel("Amplitude cumulée")
+            self.ax_hist.set_ylabel("Fréquence (Hz)")
+            freqs, weights = self._collect_full_spectrum()
+            empty_message = "Aucun test audio disponible"
+        else:
+            self.ax_hist.set_title("Fréquences détectées (tous les pics, tous les tests)")
+            self.ax_hist.set_xlabel("Nombre d'occurrences")
+            self.ax_hist.set_ylabel("Fréquence (Hz)")
+            # Tous les pics de tous les tests (pas seulement le pic dominant de chaque test) :
+            # le nombre de fois qu'une fréquence ressort, peu importe le nombre de tests ou si
+            # elle était la plus forte de son test.
+            freqs = np.array(
+                [
+                    freq
+                    for record in self._records
+                    for freq, _magnitude in (record.get("frequences_dominantes") or [])
+                ]
+            )
+            weights = None
+            empty_message = "Aucun test avec fréquence dominante"
+
+        if freqs.size:
             # Bornes des tranches alignées sur des multiples de bin_width (ex. 0-50, 50-100...)
-            # plutôt que sur min(freqs)/max(freqs), pour des intervalles lisibles et stables
-            # même si on change juste un ou deux tests.
-            bin_min = (min(freqs) // bin_width) * bin_width
-            bin_max = (max(freqs) // bin_width + 1) * bin_width
+            # plutôt que sur min/max exacts, pour des intervalles lisibles et stables même si on
+            # change juste un ou deux tests.
+            bin_min = (freqs.min() // bin_width) * bin_width
+            bin_max = (freqs.max() // bin_width + 1) * bin_width
             bins = np.arange(bin_min, bin_max + bin_width, bin_width)
-            counts, edges = np.histogram(freqs, bins=bins)
-            # barh : barres horizontales, fréquence sur l'axe Y (comme demandé) et nombre
-            # d'occurrences sur l'axe X.
-            self.ax_hist.barh(edges[:-1], counts, height=bin_width, align="edge", color="tab:blue", edgecolor="white")
+            values, edges = np.histogram(freqs, bins=bins, weights=weights)
+            # barh : barres horizontales, fréquence sur l'axe Y et occurrences/amplitude sur X.
+            self.ax_hist.barh(edges[:-1], values, height=bin_width, align="edge", color="tab:blue", edgecolor="white")
             self.ax_hist.grid(True, axis="x", alpha=0.3)
+            # Valeur exacte affichée au bout de chaque barre : la longueur d'une barre seule ne
+            # permet pas de lire la valeur précise, surtout avec des tranches larges. Sauté si
+            # trop de tranches sont non vides (ex. mode spectre complet avec des tranches fines) :
+            # le bruit de fond occupe alors presque chaque tranche, et annoter 1000+ barres rend
+            # le graphe illisible et lent à dessiner.
+            nonzero = values[values > 0]
+            if 0 < nonzero.size <= 60:
+                value_fmt = "{:.3g}" if weights is not None else "{:.0f}"
+                for y, value in zip(edges[:-1], values, strict=True):
+                    if value > 0:
+                        self.ax_hist.text(
+                            value, y + bin_width / 2, f" {value_fmt.format(value)}", va="center", fontsize=8
+                        )
         else:
             self.ax_hist.text(
                 0.5,
                 0.5,
-                "Aucun test avec fréquence dominante",
+                empty_message,
                 ha="center",
                 va="center",
                 transform=self.ax_hist.transAxes,
@@ -818,6 +862,28 @@ class ProductsPage(ttk.Frame):
             )
         self.fig_hist.tight_layout(pad=3)
         self.canvas_hist.draw()
+
+    def _collect_full_spectrum(self):
+        """Recharge chaque fichier .wav des tests affichés et renvoie (freqs, magnitudes) de
+        leurs FFT complètes concaténées - beaucoup plus de points que les ~5 pics sauvegardés
+        par test, donc plus lent, mais couvre tout le spectre, pas seulement ses sommets."""
+        all_freqs = []
+        all_magnitudes = []
+        for record in self._records:
+            path = record.get("path")
+            if path is None:
+                continue
+            try:
+                data, sr = audio_io.load_audio_file(str(path))
+            except Exception:  # noqa: BLE001 - un fichier illisible est juste ignoré pour l'histogramme
+                continue
+            freqs, magnitude = analysis.compute_fft(data, sr)
+            mask = freqs >= 20.0  # même seuil que find_dominant_frequencies, écarte le continu
+            all_freqs.append(freqs[mask])
+            all_magnitudes.append(magnitude[mask])
+        if not all_freqs:
+            return np.array([]), np.array([])
+        return np.concatenate(all_freqs), np.concatenate(all_magnitudes)
 
     def _selected_test_record(self):
         selection = self.tests_tree.selection()
