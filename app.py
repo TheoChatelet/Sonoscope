@@ -875,7 +875,7 @@ class ProductsPage(ttk.Frame):
                 continue
             try:
                 data, sr = audio_io.load_audio_file(str(path))
-            except Exception:  # noqa: BLE001 - un fichier illisible est juste ignoré pour l'histogramme
+            except Exception:  # noqa: BLE001, S112 - un fichier illisible est juste ignoré pour l'histogramme
                 continue
             freqs, magnitude = analysis.compute_fft(data, sr)
             mask = freqs >= 20.0  # même seuil que find_dominant_frequencies, écarte le continu
