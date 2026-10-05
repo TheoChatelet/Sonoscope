@@ -781,14 +781,17 @@ class ProductsPage(ttk.Frame):
 
     def _redraw_histogram(self):
         self.ax_hist.clear()
-        self.ax_hist.set_title("Distribution des fréquences dominantes")
-        self.ax_hist.set_xlabel("Nombre de tests")
+        self.ax_hist.set_title("Fréquences détectées (tous les pics, tous les tests)")
+        self.ax_hist.set_xlabel("Nombre d'occurrences")
         self.ax_hist.set_ylabel("Fréquence (Hz)")
 
+        # Tous les pics de tous les tests (pas seulement le pic dominant de chaque test) : le
+        # nombre de fois qu'une fréquence ressort, peu importe le nombre de tests ou si elle
+        # était la plus forte de son test.
         freqs = [
-            record["frequences_dominantes"][0][0]
+            freq
             for record in self._records
-            if record.get("frequences_dominantes")
+            for freq, _magnitude in (record.get("frequences_dominantes") or [])
         ]
         if freqs:
             bin_width = max(self.hist_bin_var.get(), 1)
